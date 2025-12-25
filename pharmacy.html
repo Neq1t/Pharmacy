@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Аптека — учёт заказов</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white">
+  <div id="root"></div>
+
+  <!-- React + ReactDOM + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+  <!-- Ниже вставляется скрипт приложения (Часть 3) -->
+  <script type="text/babel" data-presets="react">
+
+    const { useState, useEffect } = React;
+
+    const BASE_PRODUCTS = [
+      { id: 1, name: "Парацетамол 500 мг, табл. №10", unit: "уп." },
+      { id: 2, name: "Ибупрофен 200 мг, табл. №20", unit: "уп." },
+      { id: 3, name: "Назальный спрей \"Назол\" 10 мл", unit: "фл." },
+      { id: 4, name: "Цитрамон, табл. №10", unit: "уп." },
+      { id: 5, name: "Лоратадин 10 мг, табл. №10", unit: "уп." },
+      { id: 6, name: "Мазь \"Фастум-гель\" 30 г", unit: "туба" },
+      { id: 7, name: "Имодиум капсулы №6", unit: "уп." },
+      { id: 8, name: "Витамин C 500 мг, табл. №20", unit: "уп." },
+      { id: 9, name: "Спрей для горла \"Тантум\" 30 мл", unit: "фл." },
+      { id: 10, name: "Активированный уголь, табл. №10", unit: "уп." }
+    ];
+
+    const STATUS_OPTIONS = ["Новый", "В обработке", "Завершён"];
+
+    function generateRandomPrice() {
+      const min = 50;
+      const max = 500;
+      const value = Math.round((Math.random() * (max - min) + min) / 5) * 5;
+      return value;
+    }
+
+    function initProducts() {
+      const saved = localStorage.getItem("rx_products");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+      const withPrices = BASE_PRODUCTS.map((p) => ({
+        ...p,
+        price: generateRandomPrice(),
+        quantityAvailable: 20,
+      }));
+      localStorage.setItem("rx_products", JSON.stringify(withPrices));
+      return withPrices;
+    }
+
+    function initClients() {
+      const saved = localStorage.getItem("rx_clients");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+      const initialClients = [
+        { id: 1, name: "Иван Петров", phone: "+7 900 111-22-33", age: 32 },
+        { id: 2, name: "Анна Смирнова", phone: "+7 900 444-55-66", age: 27 },
+        { id: 3, name: "Олег Кузнецов", phone: "+7 900 777-88-99", age: 45 },
+      ];
+      localStorage.setItem("rx_clients", JSON.stringify(initialClients));
+      return initialClients;
+    }
+
+    function initUsers() {
+      const saved = localStorage.getItem("rx_users");
+      let users = [];
+      if (saved) {
+        try {
+          users = JSON.parse(saved);
+          if (!Array.isArray(users)) users = [];
+        } catch (e) {
+          users = [];
+        }
+      }
+      const ensureUser = (login, password, role) => {
+        if (!users.some((u) => u.login === login)) {
+          users.push({
+            id: users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1,
+            login,
+            password,
+            role,
+          });
+        }
+      };
+      ensureUser("admin", "1234", "Администратор");
+      ensureUser("user", "1111", "Пользователь");
+      localStorage.setItem("rx_users", JSON.stringify(users));
+      return users;
+    }
+
+    function initOrders(products, clients) {
+  const saved = localStorage.getItem("rx_orders");
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {}
+  }
+
+  const now = new Date().toLocaleString();
+
+  const firstClient =
+    clients && clients.length > 0 ? clients[0] : { id: 1, name: "Иван Петров" };
+  const firstProduct =
+    products && products.length > 0
+      ? products[0]
+      : {
+          id: 1,
+          name: "Парацетамол 500 мг, табл. №10",
+          price: 100,
+        };
+
+  const sampleOrders = [
+    {
+      id: 1,
+      clientId: firstClient.id,
+      clientName: firstClient.name,
+      status: "Новый",
+      createdAt: now,
+      comment: "Самовывоз",
+      items: [
+        {
+          productId: firstProduct.id,
+          productName: firstProduct.name,
+          quantity: 1,
+          price: firstProduct.price,
+        },
+      ],
+    },
+  ];
+
+  localStorage.setItem("rx_orders", JSON.stringify(sampleOrders));
+  return sampleOrders;
+}
+
+    function calcOrderTotal(order) {
+      if (!order.items || !order.items.length) return 0;
+      return order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    }
+
+    function TabButton({ current, id, children, onClick }) {
+      const active = current === id;
+      return (
+        <button
+          onClick={() => onClick(id)}
+          className={
+            "px-3 py-1 rounded-full border text-xs " +
+            (active
+              ? "bg-blue-600 border-blue-500 text-white"
+              : "bg-slate-900 border-slate-700 text-gray-300 hover:bg-slate-800")
+          }
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function StatusBadge({ status }) {
+      let color = "bg-slate-700 text-gray-100";
+      if (status === "Новый") color = "bg-blue-600/30 text-blue-300";
+      else if (status === "В обработке")
+        color = "bg-amber-500/20 text-amber-300";
+      else if (status === "Завершён")
+        color = "bg-emerald-500/20 text-emerald-300";
+      return (
+        <span
+          className={
+            "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium " +
+            color
+          }
+        >
+          {status}
+        </span>
+      );
+    }
+
+    function AddProductForm({ onAdd }) {
+      const [form, setForm] = useState({
+        name: "",
+        unit: "уп.",
+        price: 100,
+        quantityAvailable: 20,
+      });
+
+      function submit(e) {
+        e.preventDefault();
+        if (!form.name.trim()) return;
+        onAdd(form);
+        setForm({ name: "", unit: "уп.", price: 100, quantityAvailable: 20 });
+      }
+
+      return (
+        <div className="mt-4 border-t border-slate-700 pt-3 text-sm">
+          <div className="font-semibold mb-2">Добавить препарат</div>
+          <form
+            onSubmit={submit}
+            className="grid grid-cols-1 md:grid-cols-4 gap-2"
+          >
+            <input
+              className="bg-slate-900 rounded p-2"
+              placeholder="Название"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
+            <input
+              className="bg-slate-900 rounded p-2"
+              placeholder="Ед. (уп., фл. и т.п.)"
+              value={form.unit}
+              onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
+            />
+            <input
+              type="number"
+              min={50}
+              max={500}
+              className="bg-slate-900 rounded p-2"
+              value={form.price}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, price: Number(e.target.value) }))
+              }
+            />
+            <input
+              type="number"
+              min={1}
+              className="bg-slate-900 rounded p-2"
+              value={form.quantityAvailable}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  quantityAvailable: Number(e.target.value),
+                }))
+              }
+            />
+            <button className="md:col-span-4 bg-blue-600 hover:bg-blue-500 rounded-full px-4 py-2 text-xs font-semibold mt-1">
+              Добавить
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    function App() {
+      const [products, setProducts] = useState([]);
+      const [clients, setClients] = useState([]);
+      const [orders, setOrders] = useState([]);
+      const [users, setUsers] = useState([]);
+
+      const [cart, setCart] = useState([]);
+      const [checkoutForm, setCheckoutForm] = useState({ name: "", phone: "" });
+
+      const [selectedClient, setSelectedClient] = useState(null);
+      const [selectedOrder, setSelectedOrder] = useState(null);
+
+      const [tab, setTab] = useState("dashboard");
+
+      const [isAuth, setIsAuth] = useState(false);
+      const [currentUser, setCurrentUser] = useState(null);
+      const [loginForm, setLoginForm] = useState({ login: "admin", password: "" });
+
+      const [clientForm, setClientForm] = useState({
+        id: null,
+        name: "",
+        phone: "",
+        age: "",
+      });
+
+      const [orderForm, setOrderForm] = useState({
+        clientId: "",
+        productId: "",
+        quantity: 1,
+        comment: "",
+      });
+
+      useEffect(() => {
+        const p = initProducts();
+        const c = initClients();
+        const u = initUsers();
+        const o = initOrders(p, c);
+        setProducts(p);
+        setClients(c);
+        setUsers(u);
+        setOrders(o);
+      }, []);
+
+      useEffect(() => {
+        localStorage.setItem("rx_products", JSON.stringify(products));
+      }, [products]);
+
+      useEffect(() => {
+        localStorage.setItem("rx_clients", JSON.stringify(clients));
+      }, [clients]);
+
+      useEffect(() => {
+        localStorage.setItem("rx_orders", JSON.stringify(orders));
+      }, [orders]);
+
+      useEffect(() => {
+        localStorage.setItem("rx_users", JSON.stringify(users));
+      }, [users]);
+
+      function handleLogin(e) {
+        e.preventDefault();
+        const found = users.find(
+          (u) =>
+            u.login === loginForm.login && u.password === loginForm.password
+        );
+        if (!found) {
+          alert("Неверный логин или пароль. admin/1234 или user/1111");
+          return;
+        }
+        setIsAuth(true);
+        setCurrentUser(found);
+        setTab(found.role === "Администратор" ? "dashboard" : "store");
+      }
+
+      function handleLogout() {
+        setIsAuth(false);
+        setCurrentUser(null);
+        setTab("dashboard");
+        setLoginForm({ login: "admin", password: "" });
+      }
+
+      function openClientCard(client) {
+        setSelectedClient(client);
+        setClientForm({
+          id: client.id,
+          name: client.name,
+          phone: client.phone || "",
+          age: client.age != null ? client.age : "",
+        });
+      }
+
+      function createOrUpdateClient(e) {
+        e.preventDefault();
+        if (!clientForm.name.trim()) return;
+
+        if (clientForm.id == null) {
+          const newId = clients.length
+            ? Math.max(...clients.map((c) => c.id)) + 1
+            : 1;
+          const newClient = {
+            id: newId,
+            name: clientForm.name.trim(),
+            phone: clientForm.phone.trim(),
+            age: clientForm.age ? Number(clientForm.age) : null,
+          };
+          setClients([...clients, newClient]);
+          setClientForm({ id: null, name: "", phone: "", age: "" });
+        } else {
+          const updated = clients.map((c) =>
+            c.id === clientForm.id
+              ? {
+                  ...c,
+                  name: clientForm.name.trim(),
+                  phone: clientForm.phone.trim(),
+                  age: clientForm.age ? Number(clientForm.age) : null,
+                }
+              : c
+          );
+          setClients(updated);
+          setOrders((prev) =>
+            prev.map((o) =>
+              o.clientId === clientForm.id
+                ? { ...o, clientName: clientForm.name.trim() }
+                : o
+            )
+          );
+          if (selectedClient) {
+            setSelectedClient({
+              ...selectedClient,
+              name: clientForm.name.trim(),
+              phone: clientForm.phone.trim(),
+              age: clientForm.age ? Number(clientForm.age) : null,
+            });
+          }
+        }
+      }
+
+      function deleteClient(clientId) {
+        if (!window.confirm("Удалить клиента и его заказы?")) return;
+        setClients(clients.filter((c) => c.id !== clientId));
+        setOrders(orders.filter((o) => o.clientId !== clientId));
+        if (selectedClient && selectedClient.id === clientId) {
+          setSelectedClient(null);
+        }
+      }
+
+      function createOrder(e) {
+        e.preventDefault();
+        if (!orderForm.clientId || !orderForm.productId) {
+          alert("Выбери клиента и препарат");
+          return;
+        }
+        const clientId = Number(orderForm.clientId);
+        const productId = Number(orderForm.productId);
+        const quantity = Number(orderForm.quantity) || 1;
+
+        const client = clients.find((c) => c.id === clientId);
+        const product = products.find((p) => p.id === productId);
+        if (!client || !product) return;
+
+        const newId = orders.length ? Math.max(...orders.map((o) => o.id)) + 1 : 1;
+        const newOrder = {
+          id: newId,
+          clientId: client.id,
+          clientName: client.name,
+          userId: currentUser ? currentUser.id : null,
+          status: "Новый",
+          createdAt: new Date().toLocaleString(),
+          comment: orderForm.comment.trim(),
+          items: [
+            {
+              productId: product.id,
+              productName: product.name,
+              quantity,
+              price: product.price,
+            },
+          ],
+        };
+        setOrders([...orders, newOrder]);
+        setOrderForm({ clientId: "", productId: "", quantity: 1, comment: "" });
+        setTab("orders");
+      }
+
+      function updateOrderStatus(orderId, status) {
+        setOrders(
+          orders.map((o) => (o.id === orderId ? { ...o, status } : o))
+        );
+      }
+
+      function deleteOrder(orderId) {
+        if (!window.confirm("Удалить заказ?")) return;
+        setOrders(orders.filter((o) => o.id !== orderId));
+        if (selectedOrder && selectedOrder.id === orderId) {
+          setSelectedOrder(null);
+        }
+      }
+
+      function addToCart(product) {
+        setCart((prev) => {
+          const existing = prev.find((i) => i.productId === product.id);
+          if (existing) {
+            return prev.map((i) =>
+              i.productId === product.id
+                ? { ...i, quantity: i.quantity + 1 }
+                : i
+            );
+          }
+          return [
+            ...prev,
+            {
+              productId: product.id,
+              productName: product.name,
+              price: product.price,
+              quantity: 1,
+            },
+          ];
+        });
+      }
+
+      function changeCartQty(productId, quantity) {
+        const q = Number(quantity) || 0;
+        setCart((prev) => {
+          if (q <= 0) return prev.filter((i) => i.productId !== productId);
+          return prev.map((i) =>
+            i.productId === productId ? { ...i, quantity: q } : i
+          );
+        });
+      }
+
+      function removeCartItem(productId) {
+        setCart((prev) => prev.filter((i) => i.productId !== productId));
+      }
+
+      function clearCart() {
+        setCart([]);
+      }
+
+      function handleCheckout(e) {
+        e.preventDefault();
+        if (!cart.length) {
+          alert("Корзина пуста");
+          return;
+        }
+        if (!checkoutForm.name.trim() || !checkoutForm.phone.trim()) {
+          alert("Укажи имя и телефон для оформления заказа");
+          return;
+        }
+
+        let client = clients.find(
+          (c) => c.phone === checkoutForm.phone.trim()
+        );
+        let clientId;
+        if (!client) {
+          clientId = clients.length
+            ? Math.max(...clients.map((c) => c.id)) + 1
+            : 1;
+          client = {
+            id: clientId,
+            name: checkoutForm.name.trim(),
+            phone: checkoutForm.phone.trim(),
+            age: null,
+          };
+          setClients((prev) => [...prev, client]);
+        } else {
+          clientId = client.id;
+        }
+
+        const newId = orders.length ? Math.max(...orders.map((o) => o.id)) + 1 : 1;
+        const now = new Date().toLocaleString();
+        const newOrder = {
+          id: newId,
+          clientId,
+          clientName: checkoutForm.name.trim(),
+          userId: null,
+          status: "Новый",
+          createdAt: now,
+          comment: "Онлайн-заказ через витрину",
+          items: cart.map((i) => ({
+            productId: i.productId,
+            productName: i.productName,
+            quantity: i.quantity,
+            price: i.price,
+          })),
+        };
+        setOrders((prev) => [...prev, newOrder]);
+        clearCart();
+        setCheckoutForm({ name: "", phone: "" });
+        alert("Заказ оформлен! Администратор свяжется с вами.");
+      }
+
+      function addUser() {
+        const login = window.prompt("Логин нового пользователя:");
+        if (!login) return;
+        const password = window.prompt("Пароль нового пользователя:") || "1111";
+        const role =
+          window.prompt(
+            "Роль (например, 'Сотрудник', 'Администратор', 'Пользователь'):",
+            "Сотрудник"
+          ) || "Сотрудник";
+        const newId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
+        const newUser = { id: newId, login, password, role };
+        setUsers([...users, newUser]);
+      }
+
+      function deleteUser(id) {
+        const user = users.find((u) => u.id === id);
+        if (user && user.login === "admin") {
+          alert("Нельзя удалить базового администратора");
+          return;
+        }
+        if (!window.confirm("Удалить пользователя?")) return;
+        setUsers(users.filter((u) => u.id !== id));
+      }
+
+      function updateProductPrice(id, price) {
+        const value = Number(price) || 0;
+        setProducts(
+          products.map((p) => (p.id === id ? { ...p, price: value } : p))
+        );
+      }
+
+      function addProduct(form) {
+        if (!form.name.trim()) return;
+        const newId = products.length
+          ? Math.max(...products.map((p) => p.id)) + 1
+          : 1;
+        const newProduct = {
+          id: newId,
+          name: form.name.trim(),
+          unit: form.unit.trim() || "уп.",
+          price: Number(form.price) || 100,
+          quantityAvailable: Number(form.quantityAvailable) || 20,
+        };
+        setProducts((prev) => [...prev, newProduct]);
+      }
+
+      const totalRevenue = orders
+        .filter((o) => o.status === "Завершён")
+        .reduce((sum, o) => sum + calcOrderTotal(o), 0);
+
+      const activeOrders = orders.filter(
+        (o) => o.status === "Новый" || o.status === "В обработке"
+      );
+
+      function Dashboard() {
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="bg-slate-800 rounded-xl p-3">
+                <div className="text-xs text-gray-400">Всего препаратов</div>
+                <div className="text-2xl font-bold">{products.length}</div>
+              </div>
+              <div className="bg-slate-800 rounded-xl p-3">
+                <div className="text-xs text-gray-400">Клиентов</div>
+                <div className="text-2xl font-bold">{clients.length}</div>
+              </div>
+              <div className="bg-slate-800 rounded-xl p-3">
+                <div className="text-xs text-gray-400">
+                  Завершённые заказы (выручка)
+                </div>
+                <div className="text-2xl font-bold">
+                  {totalRevenue.toFixed(2)} ₽
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-slate-800 rounded-xl p-3">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="font-semibold">Активные заказы</h2>
+                  <button
+                    onClick={() => setTab("orders")}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Смотреть все
+                  </button>
+                </div>
+                {activeOrders.length === 0 && (
+                  <div className="text-sm text-gray-400">
+                    Активных заказов нет
+                  </div>
+                )}
+                <div className="space-y-2 max-h-60 overflow-auto">
+                  {activeOrders.map((o) => (
+                    <div
+                      key={o.id}
+                      className="bg-slate-900/60 rounded-lg p-2 text-sm flex justify-between items-start cursor-pointer hover:bg-slate-900"
+                      onClick={() => setSelectedOrder(o)}
+                    >
+                      <div>
+                        <div className="font-semibold">
+                          #{o.id} — {o.clientName}
+                        </div>
+                          <div className="text-gray-400 text-xs">
+                            {o.items && o.items.length > 0 ? o.items[0].productName : ""}
+                          </div>                      </div>
+                      <div className="text-right">
+                        <div className="text-xs mb-1">
+                          <StatusBadge status={o.status} />
+                        </div>
+                        <div className="font-semibold text-sm">
+                          {calcOrderTotal(o).toFixed(2)} ₽
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-slate-800 rounded-xl p-3">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="font-semibold">Справочник препаратов</h2>
+                  <button
+                    onClick={() => setTab("drugs")}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Перейти
+                  </button>
+                </div>
+                <div className="max-h-60 overflow-auto text-sm divide-y divide-slate-700">
+                  {products.map((p) => (
+                    <div
+                      key={p.id}
+                      className="py-1 flex justify-between items-baseline"
+                    >
+                      <div>
+                        <div>{p.name}</div>
+                        <div className="text-xs text-gray-500">
+                          ID: {p.id} • {p.unit}
+                        </div>
+                      </div>
+                      <div className="font-semibold">{p.price} ₽</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function OrdersPage() {
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-col md:flex-row md:items-end gap-3 bg-slate-800 p-3 rounded-xl">
+              <div className="flex-1 space-y-2">
+                <div className="font-semibold">Создание заказа</div>
+                <form
+                  onSubmit={createOrder}
+                  className="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm"
+                >
+                  <select
+                    className="bg-slate-900 rounded p-2"
+                    value={orderForm.clientId}
+                    onChange={(e) =>
+                      setOrderForm((f) => ({ ...f, clientId: e.target.value }))
+                    }
+                  >
+                    <option value="">Клиент</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    className="bg-slate-900 rounded p-2"
+                    value={orderForm.productId}
+                    onChange={(e) =>
+                      setOrderForm((f) => ({ ...f, productId: e.target.value }))
+                    }
+                  >
+                    <option value="">Препарат</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — {p.price} ₽
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="number"
+                    min={1}
+                    className="bg-slate-900 rounded p-2"
+                    value={orderForm.quantity}
+                    onChange={(e) =>
+                      setOrderForm((f) => ({ ...f, quantity: e.target.value }))
+                    }
+                    placeholder="Кол-во"
+                  />
+
+                  <input
+                    className="bg-slate-900 rounded p-2"
+                    value={orderForm.comment}
+                    onChange={(e) =>
+                      setOrderForm((f) => ({ ...f, comment: e.target.value }))
+                    }
+                    placeholder="Комментарий"
+                  />
+
+                  <button className="md:col-span-4 bg-blue-600 hover:bg-blue-500 rounded-full px-4 py-2 mt-1 text-sm font-semibold">
+                    Создать заказ
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <div className="bg-slate-800 rounded-xl p-3">
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="font-semibold">Список заказов</h2>
+              </div>
+              <div className="overflow-auto max-h-[420px] text-sm">
+                <table className="w-full border-collapse">
+                  <thead className="bg-slate-900 text-xs text-gray-400 sticky top-0">
+                    <tr>
+                      <th className="text-left p-2">ID</th>
+                      <th className="text-left p-2">Клиент</th>
+                      <th className="text-left p-2">Препарат</th>
+                      <th className="text-left p-2">Кол-во</th>
+                      <th className="text-left p-2">Сумма</th>
+                      <th className="text-left p-2">Статус</th>
+                      <th className="text-left p-2">Создан</th>
+                      <th className="text-left p-2">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((o) => (
+                      <tr
+                        key={o.id}
+                        className="border-b border-slate-700/60"
+                      >
+                        <td className="p-2">#{o.id}</td>
+                        <td className="p-2">
+                          <button
+                            className="text-blue-400 hover:text-blue-300"
+                            onClick={() => {
+                              const client = clients.find(
+                                (c) => c.id === o.clientId
+                              );
+                              if (client) openClientCard(client);
+                            }}
+                          >
+                            {o.clientName}
+                          </button>
+                        </td>
+                        <td className="p-2">
+                          {o.items && o.items.length > 0 ? o.items[0].productName : "-"}
+                        </td>
+                        <td className="p-2">
+                          {o.items && o.items.length > 0 ? o.items[0].quantity : "-"}
+                        </td>
+                        <td className="p-2 font-semibold">
+                          {calcOrderTotal(o).toFixed(2)} ₽
+                        </td>
+                        <td className="p-2">
+                          <div className="flex flex-col gap-1">
+                            <StatusBadge status={o.status} />
+                            <select
+                              className="bg-slate-900 rounded p-1 text-xs"
+                              value={o.status}
+                              onChange={(e) =>
+                                updateOrderStatus(o.id, e.target.value)
+                              }
+                            >
+                              {STATUS_OPTIONS.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </td>
+                        <td className="p-2 text-xs text-gray-400">
+                          {o.createdAt}
+                        </td>
+                        <td className="p-2 space-x-1 whitespace-nowrap">
+                          <button
+                            onClick={() => setSelectedOrder(o)}
+                            className="text-xs px-2 py-1 bg-slate-700 rounded-full hover:bg-slate-600"
+                          >
+                            Инфо
+                          </button>
+                          <button
+                            onClick={() => deleteOrder(o.id)}
+                            className="text-xs px-2 py-1 bg-red-600 rounded-full hover:bg-red-500"
+                          >
+                            Удалить
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function ClientsPage() {
+        return (
+          <div className="space-y-4">
+            <div className="bg-slate-800 rounded-xl p-3">
+              <div className="font-semibold mb-2">Добавить / обновить клиента</div>
+              <form
+                onSubmit={createOrUpdateClient}
+                className="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm"
+              >
+                <input
+                  className="bg-slate-900 rounded p-2"
+                  placeholder="Имя"
+                  value={clientForm.name}
+                  onChange={(e) =>
+                    setClientForm((f) => ({ ...f, name: e.target.value }))
+                  }
+                />
+                <input
+                  className="bg-slate-900 rounded p-2"
+                  placeholder="Телефон"
+                  value={clientForm.phone}
+                  onChange={(e) =>
+                    setClientForm((f) => ({ ...f, phone: e.target.value }))
+                  }
+                />
+                <input
+                  className="bg-slate-900 rounded p-2"
+                  placeholder="Возраст"
+                  type="number"
+                  min={0}
+                  value={clientForm.age}
+                  onChange={(e) =>
+                    setClientForm((f) => ({ ...f, age: e.target.value }))
+                  }
+                />
+                <button className="bg-blue-600 hover:bg-blue-500 rounded-full px-4 py-2 text-sm font-semibold">
+                  {clientForm.id == null ? "Добавить" : "Сохранить"}
+                </button>
+              </form>
+              {clientForm.id != null && (
+                <button
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-200"
+                  onClick={() =>
+                    setClientForm({ id: null, name: "", phone: "", age: "" })
+                  }
+                >
+                  Очистить форму
+                </button>
+              )}
+            </div>
+
+            <div className="bg-slate-800 rounded-xl p-3">
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="font-semibold">Список клиентов</h2>
+              </div>
+              <div className="max-h-[420px] overflow-auto text-sm divide-y divide-slate-700">
+                {clients.map((c) => (
+                  <div
+                    key={c.id}
+                    className="py-2 flex justify-between items-center cursor-pointer hover:bg-slate-900 px-2 rounded-lg"
+                    onClick={() => openClientCard(c)}
+                  >
+                    <div>
+                      <div className="font-semibold">{c.name}</div>
+                      <div className="text-xs text-gray-400">
+                        Тел: {c.phone || "—"} • Возраст: {c.age != null ? c.age : "—"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-xs px-2 py-1 bg-slate-700 rounded-full hover:bg-slate-600"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setClientForm({
+                            id: c.id,
+                            name: c.name,
+                            phone: c.phone || "",
+                            age: c.age != null ? c.age : "",
+                          });
+                        }}
+                      >
+                        Редактировать
+                      </button>
+                      <button
+                        className="text-xs px-2 py-1 bg-red-600 rounded-full hover:bg-red-500"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteClient(c.id);
+                        }}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function DrugsPage() {
+        return (
+          <div className="bg-slate-800 rounded-xl p-3 space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="font-semibold">Справочник препаратов</h2>
+              <span className="text-xs text-gray-400">
+                {products.length} позиций, цены 50–500 ₽
+              </span>
+            </div>
+            <div className="max-h-[480px] overflow-auto text-sm">
+              <table className="w-full border-collapse">
+                <thead className="bg-slate-900 text-xs text-gray-400 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">ID</th>
+                    <th className="text-left p-2">Название</th>
+                    <th className="text-left p-2">Ед.</th>
+                    <th className="text-left p-2">Цена, ₽</th>
+                    <th className="text-left p-2">Доступно</th>
+                    <th className="text-left p-2">Управление</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p) => (
+                    <tr key={p.id} className="border-b border-slate-700/60">
+                      <td className="p-2">{p.id}</td>
+                      <td className="p-2">{p.name}</td>
+                      <td className="p-2">{p.unit}</td>
+                      <td className="p-2">
+                        <input
+                          type="number"
+                          min={50}
+                          max={500}
+                          className="bg-slate-900 rounded p-1 text-sm w-24"
+                          value={p.price}
+                          onChange={(e) => updateProductPrice(p.id, e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        {p.quantityAvailable != null ? p.quantityAvailable : "-"}
+                      </td>
+                      <td className="p-2">
+                        <button
+                          className="text-xs px-2 py-1 bg-red-600 rounded-full hover:bg-red-500"
+                          onClick={() => deleteProduct(p.id)}
+                        >
+                          Удалить
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <AddProductForm onAdd={addProduct} />
+          </div>
+        );
+      }
+
+      function UserStorePage() {
+        return (
+          <div className="bg-slate-800 rounded-xl p-3 space-y-3">
+            <div className="flex justify_between items-center mb-1">
+              <h2 className="font-semibold">Товары аптеки</h2>
+              <span className="text-xs text-gray-400">
+                Доступно: {products.length} позиций
+              </span>
+            </div>
+            <div className="max-h-[480px] overflow-auto text-sm divide-y divide-slate-700">
+              {products.map((p) => (
+                <div
+                  key={p.id}
+                  className="py-2 flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-semibold">{p.name}</div>
+                    <div className="text-xs text-gray-400">
+                      Остаток: {p.quantityAvailable != null ? p.quantityAvailable : "—"}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold mb-1">{p.price} ₽</div>
+                    <button
+                      className="text-xs px-3 py-1 bg-blue-600 rounded-full hover:bg-blue-500"
+                      onClick={() => addToCart(p)}
+                    >
+                      В корзину
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      function UserCartPage() {
+        const total = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 bg-slate-800 rounded-xl p-3">
+              <h2 className="font-semibold mb-2">Корзина</h2>
+              {cart.length === 0 ? (
+                <div className="text-sm text-gray-400">
+                  Корзина пуста. Добавь товары из раздела "Товары".
+                </div>
+              ) : (
+                <div className="space-y-2 text-sm max-h-[380px] overflow-auto">
+                  {cart.map((item) => (
+                    <div
+                      key={item.productId}
+                      className="flex justify-between items-center bg-slate-900/70 rounded-lg p-2"
+                    >
+                      <div>
+                        <div className="font-semibold">{item.productName}</div>
+                        <div className="text-xs text-gray-400">
+                          Цена: {item.price} ₽
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          className="w-16 bg-slate-900 rounded p-1 text-sm"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            changeCartQty(item.productId, e.target.value)
+                          }
+                        />
+                        <div className="font-semibold w-20 text-right">
+                          {(item.price * item.quantity).toFixed(2)} ₽
+                        </div>
+                        <button
+                          className="text-xs px-2 py-1 bg-red-600 rounded-full hover:bg-red-500"
+                          onClick={() => removeCartItem(item.productId)}
+                        >
+                          Удалить
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-slate-800 rounded-xl p-3 text-sm">
+              <h2 className="font-semibold mb-2">Оформление заказа</h2>
+              <div className="mb-3">
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Товаров:</span>
+                  <span>{cart.length}</span>
+                </div>
+                <div className="flex justify-between text-base font-semibold">
+                  <span>Итого к оплате:</span>
+                  <span>{total.toFixed(2)} ₽</span>
+                </div>
+              </div>
+              <form onSubmit={handleCheckout} className="space-y-2">
+                <div>
+                  <label className="text-xs text-gray-400">Имя</label>
+                  <input
+                    className="w-full bg-slate-900 rounded p-2 mt-1"
+                    value={checkoutForm.name}
+                    onChange={(e) =>
+                      setCheckoutForm((f) => ({
+                        ...f,
+                        name: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400">Телефон</label>
+                  <input
+                    className="w-full bg-slate-900 rounded p-2 mt-1"
+                    value={checkoutForm.phone}
+                    onChange={(e) =>
+                      setCheckoutForm((f) => ({
+                        ...f,
+                        phone: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 rounded-full py-2 text-xs font-semibold mt-2"
+                  disabled={!cart.length}
+                >
+                  Оплатить и оформить заказ
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      function AdminPage() {
+        return (
+          <div className="space-y-4">
+            <div className="bg-slate-800 rounded-xl p-3">
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="font-semibold">Пользователи системы</h2>
+                <button
+                  className="bg-blue-600 hover:bg-blue-500 rounded-full px-3 py-1 text-xs font-semibold"
+                  onClick={addUser}
+                >
+                  Добавить пользователя
+                </button>
+              </div>
+              <div className="text-sm max-h-60 overflow-auto divide-y divide-slate-700">
+                {users.map((u) => (
+                  <div
+                    key={u.id}
+                    className="py-2 flex justify-between items-center"
+                  >
+                    <div>
+                      <div className="font-semibold">{u.login}</div>
+                      <div className="text-xs text-gray-400">Роль: {u.role}</div>
+                    </div>
+                    <button
+                      className="text-xs px-2 py-1 bg-red-600 rounded-full hover:bg-red-500"
+                      onClick={() => deleteUser(u.id)}
+                      disabled={u.login === "admin"}
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-slate-800 rounded-xl p-3">
+              <h2 className="font-semibold mb-2">Краткий отчёт</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <div className="text-xs text-gray-400 mb-1">Заказы</div>
+                  <div>Всего: {orders.length}</div>
+                  <div>Активные: {activeOrders.length}</div>
+                  <div>
+                    Завершённые:{" "}
+                    {orders.filter((o) => o.status === "Завершён").length}
+                  </div>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <div className="text-xs text-gray-400 mb-1">
+                    Выручка (завершённые)
+                  </div>
+                  <div className="text-xl font-bold">
+                    {totalRevenue.toFixed(2)} ₽
+                  </div>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <div className="text-xs text-gray-400 mb-1">
+                    Клиенты / Препараты
+                  </div>
+                  <div>Клиентов: {clients.length}</div>
+                  <div>Препаратов: {products.length}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (!isAuth) {
+        return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-xl">
+              <h1 className="text-xl font-bold mb-1">Вход в систему аптеки</h1>
+              <p className="text-xs text-gray-400 mb-4">
+                Роли: Администратор (admin/1234) или Пользователь (user/1111)
+              </p>
+              <form onSubmit={handleLogin} className="space-y-3 text-sm">
+                <div>
+                  <label className="text-xs text-gray-400">Логин</label>
+                  <input
+                    className="w-full bg-slate-900 rounded p-2 mt-1"
+                    value={loginForm.login}
+                    onChange={(e) =>
+                      setLoginForm((f) => ({ ...f, login: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400">Пароль</label>
+                  <input
+                    type="password"
+                    className="w-full bg-slate-900 rounded p-2 mt-1"
+                    value={loginForm.password}
+                    onChange={(e) =>
+                      setLoginForm((f) => ({ ...f, password: e.target.value }))
+                    }
+                  />
+                </div>
+                <button className="w-full bg-blue-600 hover:bg-blue-500 rounded-full py-2 font-semibold text-sm">
+                  Войти
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      if (currentUser && currentUser.role === "Пользователь") {
+        return (
+          <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+            <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="font-bold text-lg">Аптека — витрина</div>
+                <div className="text-xs text-gray-400">
+                  Просмотр ассортимента и оформление заказов
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <div className="text-right">
+                  <div className="font-semibold">{currentUser.login}</div>
+                  <div className="text-gray-400">{currentUser.role}</div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="bg-slate-800 hover:bg-slate-700 rounded-full px-3 py-1"
+                >
+                  Выйти
+                </button>
+              </div>
+            </header>
+
+            <div className="px-4 pt-3 flex flex-wrap gap-2 text-xs border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10">
+              <TabButton current={tab} id="store" onClick={setTab}>
+                Товары
+              </TabButton>
+              <TabButton current={tab} id="cart" onClick={setTab}>
+                Корзина
+              </TabButton>
+            </div>
+
+            <main className="flex-1 px-4 py-4 overflow-auto">
+              {tab === "store" && <UserStorePage />}
+              {tab === "cart" && <UserCartPage />}
+            </main>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+          <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+            <div>
+              <div className="font-bold text-lg">Аптека — админ-панель</div>
+              <div className="text-xs text-gray-400">
+                Управление препаратами, клиентами и заказами
+              </div>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              {currentUser && (
+                <div className="text-right">
+                  <div className="font-semibold">{currentUser.login}</div>
+                  <div className="text-gray-400">{currentUser.role}</div>
+                </div>
+              )}
+              <button
+                onClick={handleLogout}
+                className="bg-slate-800 hover:bg-slate-700 rounded-full px-3 py-1"
+              >
+                Выйти
+              </button>
+            </div>
+          </header>
+
+          <div className="px-4 pt-3 flex flex-wrap gap-2 text-xs border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10">
+            <TabButton current={tab} id="dashboard" onClick={setTab}>
+              Панель
+            </TabButton>
+            <TabButton current={tab} id="orders" onClick={setTab}>
+              Заказы
+            </TabButton>
+            <TabButton current={tab} id="clients" onClick={setTab}>
+              Клиенты
+            </TabButton>
+            <TabButton current={tab} id="drugs" onClick={setTab}>
+              Препараты
+            </TabButton>
+            <TabButton current={tab} id="admin" onClick={setTab}>
+              Администрирование
+            </TabButton>
+          </div>
+
+          <main className="flex-1 px-4 py-4 overflow-auto">
+            {tab === "dashboard" && <Dashboard />}
+            {tab === "orders" && <OrdersPage />}
+            {tab === "clients" && <ClientsPage />}
+            {tab === "drugs" && <DrugsPage />}
+            {tab === "admin" && <AdminPage />}
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
